@@ -1,28 +1,14 @@
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use clap::Parser;
 use nix::{
     errno::Errno,
     fcntl::{renameat2, RenameFlags},
     sys::stat,
-    sys::stat::FileStat,
 };
 use std::{path::Path, path::PathBuf};
 use thiserror::Error;
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    left: PathBuf,
-    right: PathBuf,
-}
-
-impl Args {
-    fn validate(&self) -> Result<()> {
-        status(&self.left)?;
-        status(&self.right)?;
-        Ok(())
-    }
-}
+type RexResult = Result<()>;
 
 #[derive(Debug, Error)]
 enum RexError {
@@ -36,27 +22,54 @@ enum RexError {
     Rename(#[from] Errno),
 }
 
-fn status(path: &Path) -> Result<FileStat> {
+fn status(path: &Path) -> RexResult {
     let path_buf: PathBuf = path.clone().into();
-    Ok(stat::stat(path).map_err(|errno| RexError::Status {
-        path: path_buf.to_string_lossy().into(),
-        source: errno,
-    })?)
+    stat::stat(path)
+        .map_err(|errno| RexError::Status {
+            path: path_buf.to_string_lossy().into(),
+            source: errno,
+        })
+        .map(|_| ())?;
+    Ok(())
 }
 
-fn rex(args: Args) -> Result<()> {
-    args.validate()?;
-
-    Ok(renameat2(
-        None,
-        &args.left,
-        None,
-        &args.right,
-        RenameFlags::RENAME_EXCHANGE,
-    )
-    .map_err(RexError::Rename)?)
+#[derive(Parser, Debug)]
+#[command(
+    author,
+    version,
+    about("atomically swap content of file arguments left and right"),
+    long_about = None,
+    arg_required_else_help(true),
+    propagate_version(true)
+)]
+struct RexArgs {
+    left: PathBuf,
+    right: PathBuf,
 }
 
-fn main() -> Result<()> {
-    rex(Args::parse())
+impl RexArgs {
+    fn validate(&self) -> RexResult {
+        status(&self.left)?;
+        status(&self.right)?;
+        Ok(())
+    }
+
+    fn run(self) -> RexResult {
+        self.validate()?;
+
+        renameat2(
+            None,
+            &self.left,
+            None,
+            &self.right,
+            RenameFlags::RENAME_EXCHANGE,
+        )
+        .map_err(RexError::Rename)?;
+
+        Ok(())
+    }
+}
+
+fn main() -> RexResult {
+    RexArgs::parse().run()
 }
